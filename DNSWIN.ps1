@@ -29,6 +29,7 @@ Write-Host "`nCreando el registro A para www.$domainName apuntando a $recordIP..
 Add-DnsServerResourceRecordA -ZoneName $domainName -Name $recordName -IPv4Address $recordIP -TimeToLive 01:00:00
 Write-Host "Registro A creado exitosamente."
 
+
 # Agregar un alias (CNAME) para "web" que apunte a "www.$domainName"
 Write-Host "`nCreando un alias (CNAME) 'web.$domainName' apuntando a 'www.$domainName'..."
 Add-DnsServerResourceRecordCName -ZoneName $domainName -Name "web" -HostNameAlias "www.$domainName" -TimeToLive 01:00:00

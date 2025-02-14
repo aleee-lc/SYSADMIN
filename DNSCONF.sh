@@ -1,125 +1,114 @@
 #!/bin/bash
 
-# Variables
-read -p "Ingrese el nombre del dominio: " DOMAIN
-ZONE_FILE="/etc/bind/db.$DOMAIN"
-BIND_CONF="/etc/bind/named.conf.local"
+# Pedir la IP y el dominio
+echo "Introduce la nueva IP para enp0s8:"
+read ip+lo: ejemplo.com):"
+read dominio
 
-# Función para validar la dirección IP
-validate_ip() {
-    local ip=$1
-    local regex='^([0-9]{1,3}\.){3}[0-9]{1,3}$'
-    if [[ $ip =~ $regex ]]; then
-        IFS='.' read -r -a octets <<< "$ip"
-        for octet in "${octets[@]}"; do
-            if (( octet < 0 || octet > 255 )); then
-                echo "IP inválida: fuera de rango"
-                exit 1
-            fi
-        done
-    else
-        echo "Formato de IP inválido"
-        exit 1
-    fi
-}
+# Calcular la red inversa
+inversa=$(echo $ip | awk -F. '{print $3"."$2"."$1}')
 
-# Función para validar el dominio
-validate_domain() {
-    local domain=$1
-    local regex='^([a-zA-Z0-9]+(-[a-zA-Z0-9]+)*\.)+[a-zA-Z]{2,}$'
-    if ! [[ $domain =~ $regex ]]; then
-        echo "Dominio inválido"
-        exit 1
-    fi
-}
+echo "Red inversa calculada: $inversa"
 
-# Solicitar la IP del servidor DNS
-read -p "Ingrese la dirección IP del servidor DNS: " SERVER_IP
-validate_ip $SERVER_IP
+# Configurar la IP en Netplan
+cat <<EOL | sudo tee /etc/netplan/00-installer-config.yaml
+network:
+     ethernets:
+        enp0s3:
+            dhcp4: true  
+        enp0s8: 
+            addresses: [$ip/24]
+            nameservers:
+                addresses: [8.8.8.8, 1.1.1.1]
+     version: 2
+EOL
 
-REV_ZONE_FILE="/etc/bind/db.$(echo $ip | awk -F. '{print $3"."$2"."$1}')"
-
-# Validar el dominio
-validate_domain $DOMAIN
-
-#Fijar la IP
-echo "network:
-  version: 2
-  renderer: networkd
-  ethernets:
-    enp0s3:
-      dhcp4: true
-    enp0s8:
-      addresses: [$SERVER_IP/24]
-      nameservers:
-        addresses: [8.8.8.8, 1.1.1.1]" | sudo tee /etc/netplan/50-cloud-init.yaml > /dev/null
-echo "Fijando la IP $SERVER_IP"
-
-#Aplicar cambios
 sudo netplan apply
-echo "Aplicando cambios"
 
-# Instalar BIND9 si no está instalado
-echo "Instalando BIND9..."
-sudo apt-get install bind9 bind9utils bind9-doc
-sudo apt-get install dnsutils
+# Instalar BIND9
+sudo apt-get update
+sudo apt-get install bind9 bind9utils bind9-doc -y
 
-# Agregar la configuración de zonas a BIND
-echo "Agregando configuración de zonas..."
-cat <<EOF | sudo tee -a $BIND_CONF
-zone "$DOMAIN" {
-    type master;
-    file "$ZONE_FILE";
+# Editar named.conf.options
+cat <<EOL | sudo tee /etc/bind/named.conf.options
+options {
+    directory "/var/cache/bind";
+    
+        forwarders {
+            8.8.8.8;
+        };
+
+    dnssec-validation auto;
+
+    listen-on=v6 { any; };
+};
+EOL
+
+# Editar named.conf.local
+cat <<EOL \ sudo tee /etc/bind/named.conf.local
+zone "$dominio" {
+        type master;
+        file "/etc/bind/db.$dominio";
 };
 
-zone "192.in-addr.arpa" {
-    type master;
-    file "$REV_ZONE_FILE";
+zone "$inversa.in-addr.arpa" {
+        type master;
+        file "file "/etc/bind/db.$inversa";
 };
-EOF
+EOL
 
-# Configurar archivo de zona directa
-echo "Configurando archivo de zona directa..."
-cat <<EOF | sudo tee $ZONE_FILE
-\$TTL 604800
-@   IN  SOA $DOMAIN. root.$DOMAIN. (
-        2         ; Serial
-        604800    ; Refresh
-        86400     ; Retry
-        2419200   ; Expire
-        604800 )  ; Negative Cache TTL
+# Agregar zona y zona inversa
+sudo named-checkconf
+
+# Crear archivo de zona inversa
+sudo cp /etc/bind/db.127 /etc/bind/db.$inversa
+
+cat <<EOL \ sudo tee /etc/bind/db.$inversa
+\$TTL    604000
+@       IN      SOA     $dominio. admin.$dominio}. (
+                              1        ; Serial
+                         604000      ; Refresh
+                          86400      ; Retry
+                        2419200     ; Expire
+                         60480 )    ; Negative Cache TTL
 ;
-@   	IN  	NS  	$DOMAIN.
-@   	IN  	A   	$SERVER_IP
-www 	IN  	CNAME   $DOMAIN.
-EOF
+@       IN      NS      $dominio.
+10      IN      PTR     $dominio.
 
-# Configurar archivo de zona inversa
-echo "Configurando archivo de zona inversa..."
-cat <<EOF | sudo tee $REV_ZONE_FILE
-\$TTL 604800
-@   IN  SOA $DOMAIN. root.$DOMAIN. (
-        2         ; Serial
-        604800    ; Refresh
-        86400     ; Retry
-        2419200   ; Expire
-        604800 )  ; Negative Cache TTL
+EOL
+
+
+# Crear archivo de zona directa
+sudo cp /etc/bind/db.local /etc/bind/db.$dominio
+
+cat <<EOL \ sudo tee /etc/bind/db.$dominio
+\$TTL    604000
+@       IN      SOA     $dominio. admin.$dominio}. (
+                              2        ; Serial
+                         604000      ; Refresh
+                          86400      ; Retry
+                        2419200     ; Expire
+                         60480 )    ; Negative Cache TTL
 ;
-@   IN  NS  $DOMAIN.
-$(echo $SERVER_IP | awk -F. '{print $4}') IN  PTR   $DOMAIN.
-EOF
+@       IN      NS      $dominio.
+@       IN      A       $ip
+wwww      IN      CNAME     $dominio.
 
-#Apuntar a la máquina a su propio servidor DNS
-sudo sed -i "/^search /c\search $DOMAIN" /etc/resolv.conf    
-sudo sed -i "/^nameserver /c\nameserver $SERVER_IP" /etc/resolv.conf
-echo "Fijando la IP $ip para el servidor DNS"
+EOL
 
-# Reiniciar el servicio BIND9
-echo "Reiniciando BIND9..."
+
+# Verificar zona directa
+sudo named-checkzone "$dominio" /etc/bind/db.$dominio
+
+# Configurar resolv.conf
+cat <<EOL | sudo tee /etc/resolv.conf
+search $dominio
+domain $dominio
+nameserver $ip
+options edns0 trust-ad
+EOL
+
+
+# Reiniciar y verificar estado de BIND9
 sudo systemctl restart bind9
-
-# Verificar estado del servicio
-echo "Verificando estado del servicio..."
-sudo systemctl status bind9 --no-pager
-
-echo "Servidor DNS configurado correctamente."
+sudo systemctl status bind9
