@@ -2,7 +2,8 @@
 
 # Pedir la IP y el dominio
 echo "Introduce la nueva IP para enp0s8:"
-read ip+lo: ejemplo.com):"
+read ip
+echo "Ingresa el dominio:"
 read dominio
 
 # Calcular la red inversa
