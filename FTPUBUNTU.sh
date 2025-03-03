@@ -11,15 +11,9 @@ listen=YES
 anonymous_enable=YES
 local_enable=YES
 write_enable=YES
-anon_upload_enable=NO
-anon_mkdir_write_enable=NO
-dirmessage_enable=YES
-use_localtime=YES
-xferlog_enable=YES
-connect_from_port_20=YES
 chroot_local_user=YES
 allow_writeable_chroot=YES
-local_root=/srv/ftp
+local_root=/srv/ftp/\$USER
 user_sub_token=\$USER
 local_umask=022
 anon_root=/srv/ftp/publico
@@ -27,10 +21,13 @@ anon_root=/srv/ftp/publico
 # Desactivar TLS para permitir conexiones simples desde FileZilla
 ssl_enable=NO
 
-# Configuración pasiva para evitar problemas con NAT y Firewalls
+# Permitir conexiones pasivas para evitar problemas con NAT/Firewall
 pasv_enable=YES
 pasv_min_port=40000
 pasv_max_port=50000
+
+# Permitir que usuarios locales usen FTP
+pam_service_name=vsftpd
 EOF
 
     systemctl restart vsftpd
@@ -38,7 +35,7 @@ EOF
     echo "vsftpd instalado y configurado correctamente."
 }
 
-# Función para configurar las carpetas y permisos
+# Función para configurar carpetas y permisos
 configurar_permisos() {
     echo "Configurando carpetas y permisos..."
     
@@ -80,6 +77,9 @@ crear_usuario() {
     passwd $usuario
     chmod 750 /srv/ftp/$usuario
     chown $usuario:$grupo /srv/ftp/$usuario
+
+    # Asegurar que el usuario no está en la lista de bloqueados
+    sed -i "/^$usuario$/d" /etc/ftpusers
 
     echo "Usuario $usuario creado en el grupo $grupo."
 }
