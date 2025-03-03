@@ -23,6 +23,14 @@ local_root=/srv/ftp
 user_sub_token=\$USER
 local_umask=022
 anon_root=/srv/ftp/publico
+
+# Desactivar TLS para permitir conexiones simples desde FileZilla
+ssl_enable=NO
+
+# Configuración pasiva para evitar problemas con NAT y Firewalls
+pasv_enable=YES
+pasv_min_port=40000
+pasv_max_port=50000
 EOF
 
     systemctl restart vsftpd
