@@ -19,6 +19,12 @@ use_localtime=YES
 dirmessage_enable=YES
 xferlog_enable=YES
 
+# Permitir solo lectura para usuarios anónimos
+anon_world_readable_only=YES
+anon_upload_enable=NO
+anon_mkdir_write_enable=NO
+anon_other_write_enable=NO
+
 # Desactivar TLS para permitir conexiones simples desde FileZilla
 ssl_enable=NO
 
@@ -68,7 +74,7 @@ configurar_permisos() {
 
     # Asignar permisos
     chmod 755 /srv/ftp
-    chmod 777 /srv/ftp/publico
+    chmod 755 /srv/ftp/publico  # Permite solo lectura a anónimos
     chmod 770 /srv/ftp/reprobados
     chmod 770 /srv/ftp/recursadores
     chown root:root /srv/ftp
@@ -102,18 +108,20 @@ crear_usuario() {
     # Asegurar que el usuario no está en la lista de bloqueados
     sed -i "/^$usuario$/d" /etc/ftpusers
 
-    # Crear carpetas dentro de la carpeta del usuario
-    mkdir -p /srv/ftp/$usuario/{grupo,publico}
-    chown $usuario:$grupo /srv/ftp/$usuario/grupo
-    chown $usuario:$grupo /srv/ftp/$usuario/publico
+    # Crear subcarpeta dentro del usuario
+    mkdir -p /srv/ftp/$usuario/home
+    chown $usuario:$grupo /srv/ftp/$usuario/home
 
-    # Montar carpetas compartidas dentro del home del usuario
-    mount --bind /srv/ftp/$grupo /srv/ftp/$usuario/grupo
-    mount --bind /srv/ftp/publico /srv/ftp/$usuario/publico
+    # Crear enlaces a su carpeta real, grupo y público
+    mkdir -p /srv/ftp/$usuario/home/{mis_archivos,grupo,publico}
+    mount --bind /srv/ftp/$usuario /srv/ftp/$usuario/home/mis_archivos
+    mount --bind /srv/ftp/$grupo /srv/ftp/$usuario/home/grupo
+    mount --bind /srv/ftp/publico /srv/ftp/$usuario/home/publico
 
     # Agregar a fstab para que se monten automáticamente al reiniciar
-    echo "/srv/ftp/$grupo /srv/ftp/$usuario/grupo none bind 0 0" >> /etc/fstab
-    echo "/srv/ftp/publico /srv/ftp/$usuario/publico none bind 0 0" >> /etc/fstab
+    echo "/srv/ftp/$usuario /srv/ftp/$usuario/home/mis_archivos none bind 0 0" >> /etc/fstab
+    echo "/srv/ftp/$grupo /srv/ftp/$usuario/home/grupo none bind 0 0" >> /etc/fstab
+    echo "/srv/ftp/publico /srv/ftp/$usuario/home/publico none bind 0 0" >> /etc/fstab
 
     echo "Usuario $usuario creado en el grupo $grupo con accesos configurados."
 }
@@ -127,15 +135,17 @@ eliminar_usuario() {
     fi
 
     # Desmontar enlaces antes de eliminar la carpeta
-    umount /srv/ftp/$usuario/grupo 2>/dev/null
-    umount /srv/ftp/$usuario/publico 2>/dev/null
+    umount /srv/ftp/$usuario/home/mis_archivos 2>/dev/null
+    umount /srv/ftp/$usuario/home/grupo 2>/dev/null
+    umount /srv/ftp/$usuario/home/publico 2>/dev/null
 
     # Eliminar usuario
     userdel -r $usuario
 
     # Eliminar entradas en fstab
-    sed -i "/srv\/ftp\/$usuario\/grupo/d" /etc/fstab
-    sed -i "/srv\/ftp\/$usuario\/publico/d" /etc/fstab
+    sed -i "/srv\/ftp\/$usuario\/home\/mis_archivos/d" /etc/fstab
+    sed -i "/srv\/ftp\/$usuario\/home\/grupo/d" /etc/fstab
+    sed -i "/srv\/ftp\/$usuario\/home\/publico/d" /etc/fstab
 
     echo "Usuario $usuario eliminado."
 }
