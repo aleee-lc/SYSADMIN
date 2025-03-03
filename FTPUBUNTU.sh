@@ -3,8 +3,8 @@
 # Función para instalar y configurar vsftpd
 instalar_vsftpd() {
     echo "Instalando vsftpd..."
-    apt update && apt install -y vsftpd
-    
+    apt update && apt install -y vsftpd ufw
+
     echo "Configurando vsftpd..."
     cat <<EOF > /etc/vsftpd.conf
 listen=YES
@@ -13,10 +13,11 @@ local_enable=YES
 write_enable=YES
 chroot_local_user=YES
 allow_writeable_chroot=YES
-local_root=/srv/ftp/\$USER
-user_sub_token=\$USER
 local_umask=022
 anon_root=/srv/ftp/publico
+use_localtime=YES
+dirmessage_enable=YES
+xferlog_enable=YES
 
 # Desactivar TLS para permitir conexiones simples desde FileZilla
 ssl_enable=NO
@@ -26,7 +27,7 @@ pasv_enable=YES
 pasv_min_port=40000
 pasv_max_port=50000
 
-# Permitir que usuarios locales usen FTP
+# Permitir autenticación PAM
 pam_service_name=vsftpd
 EOF
 
@@ -35,10 +36,29 @@ EOF
     echo "vsftpd instalado y configurado correctamente."
 }
 
+# Función para configurar autenticación PAM
+configurar_pam() {
+    echo "Configurando autenticación PAM para vsftpd..."
+    cat <<EOF > /etc/pam.d/vsftpd
+auth    required    pam_unix.so
+account required    pam_unix.so
+session required    pam_unix.so
+EOF
+}
+
+# Función para configurar firewall UFW
+configurar_ufw() {
+    echo "Configurando firewall UFW..."
+    ufw allow 21/tcp
+    ufw allow 40000:50000/tcp
+    ufw reload
+    echo "Reglas de firewall aplicadas correctamente."
+}
+
 # Función para configurar carpetas y permisos
 configurar_permisos() {
     echo "Configurando carpetas y permisos..."
-    
+
     # Crear carpetas principales
     mkdir -p /srv/ftp/{publico,reprobados,recursadores}
 
@@ -59,7 +79,7 @@ configurar_permisos() {
     echo "Permisos configurados correctamente."
 }
 
-# Función para crear un nuevo usuario
+# Función para crear un nuevo usuario con enlaces de grupo y público
 crear_usuario() {
     read -p "Ingrese el nombre de usuario: " usuario
     if id "$usuario" &>/dev/null; then
@@ -73,7 +93,8 @@ crear_usuario() {
         return
     fi
 
-    useradd -m -d /srv/ftp/$usuario -s /usr/sbin/nologin -g $grupo $usuario
+    # Crear usuario con su carpeta
+    useradd -m -d /srv/ftp/$usuario -s /bin/false -g $grupo $usuario
     passwd $usuario
     chmod 750 /srv/ftp/$usuario
     chown $usuario:$grupo /srv/ftp/$usuario
@@ -81,28 +102,23 @@ crear_usuario() {
     # Asegurar que el usuario no está en la lista de bloqueados
     sed -i "/^$usuario$/d" /etc/ftpusers
 
-    echo "Usuario $usuario creado en el grupo $grupo."
+    # Crear carpetas dentro de la carpeta del usuario
+    mkdir -p /srv/ftp/$usuario/{grupo,publico}
+    chown $usuario:$grupo /srv/ftp/$usuario/grupo
+    chown $usuario:$grupo /srv/ftp/$usuario/publico
+
+    # Montar carpetas compartidas dentro del home del usuario
+    mount --bind /srv/ftp/$grupo /srv/ftp/$usuario/grupo
+    mount --bind /srv/ftp/publico /srv/ftp/$usuario/publico
+
+    # Agregar a fstab para que se monten automáticamente al reiniciar
+    echo "/srv/ftp/$grupo /srv/ftp/$usuario/grupo none bind 0 0" >> /etc/fstab
+    echo "/srv/ftp/publico /srv/ftp/$usuario/publico none bind 0 0" >> /etc/fstab
+
+    echo "Usuario $usuario creado en el grupo $grupo con accesos configurados."
 }
 
-# Función para modificar un usuario
-modificar_usuario() {
-    read -p "Ingrese el nombre del usuario a modificar: " usuario
-    if ! id "$usuario" &>/dev/null; then
-        echo "El usuario no existe."
-        return
-    fi
-
-    read -p "Nuevo grupo (reprobados/recursadores): " grupo
-    if [[ "$grupo" != "reprobados" && "$grupo" != "recursadores" ]]; then
-        echo "Grupo inválido."
-        return
-    fi
-
-    usermod -g $grupo $usuario
-    echo "Usuario $usuario cambiado al grupo $grupo."
-}
-
-# Función para eliminar un usuario
+# Función para eliminar un usuario y desmontar enlaces
 eliminar_usuario() {
     read -p "Ingrese el nombre del usuario a eliminar: " usuario
     if ! id "$usuario" &>/dev/null; then
@@ -110,7 +126,17 @@ eliminar_usuario() {
         return
     fi
 
+    # Desmontar enlaces antes de eliminar la carpeta
+    umount /srv/ftp/$usuario/grupo 2>/dev/null
+    umount /srv/ftp/$usuario/publico 2>/dev/null
+
+    # Eliminar usuario
     userdel -r $usuario
+
+    # Eliminar entradas en fstab
+    sed -i "/srv\/ftp\/$usuario\/grupo/d" /etc/fstab
+    sed -i "/srv\/ftp\/$usuario\/publico/d" /etc/fstab
+
     echo "Usuario $usuario eliminado."
 }
 
@@ -119,16 +145,14 @@ gestionar_usuarios() {
     while true; do
         echo -e "\n--- Gestión de Usuarios ---"
         echo "1) Crear usuario"
-        echo "2) Modificar usuario"
-        echo "3) Eliminar usuario"
-        echo "4) Salir"
+        echo "2) Eliminar usuario"
+        echo "3) Salir"
         read -p "Seleccione una opción: " opcion
 
         case $opcion in
             1) crear_usuario ;;
-            2) modificar_usuario ;;
-            3) eliminar_usuario ;;
-            4) break ;;
+            2) eliminar_usuario ;;
+            3) break ;;
             *) echo "Opción inválida." ;;
         esac
     done
@@ -137,6 +161,8 @@ gestionar_usuarios() {
 # Función principal
 main() {
     instalar_vsftpd
+    configurar_pam
+    configurar_ufw
     configurar_permisos
     gestionar_usuarios
 }
