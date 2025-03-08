@@ -85,7 +85,7 @@ configurar_permisos() {
     echo "Permisos configurados correctamente."
 }
 
-# Función para crear un nuevo usuario con enlaces de grupo y público
+# Función para crear un nuevo usuario con su carpeta personalizada
 crear_usuario() {
     read -p "Ingrese el nombre de usuario: " usuario
     if id "$usuario" &>/dev/null; then
@@ -108,22 +108,23 @@ crear_usuario() {
     # Asegurar que el usuario no está en la lista de bloqueados
     sed -i "/^$usuario$/d" /etc/ftpusers
 
-    # Crear subcarpeta dentro del usuario
+    # Crear subcarpeta home dentro del usuario
     mkdir -p /srv/ftp/$usuario/home
     chown $usuario:$grupo /srv/ftp/$usuario/home
 
-    # Crear enlaces a su carpeta real, grupo y público
-    mkdir -p /srv/ftp/$usuario/home/{mis_archivos,grupo,publico}
-    mount --bind /srv/ftp/$usuario /srv/ftp/$usuario/home/mis_archivos
-    mount --bind /srv/ftp/$grupo /srv/ftp/$usuario/home/grupo
+    # Crear enlaces con nombres personalizados
+    mkdir -p /srv/ftp/$usuario/home/{$usuario,$grupo,publico}
+
+    mount --bind /srv/ftp/$usuario /srv/ftp/$usuario/home/$usuario
+    mount --bind /srv/ftp/$grupo /srv/ftp/$usuario/home/$grupo
     mount --bind /srv/ftp/publico /srv/ftp/$usuario/home/publico
 
-    # Agregar a fstab para que se monten automáticamente al reiniciar
-    echo "/srv/ftp/$usuario /srv/ftp/$usuario/home/mis_archivos none bind 0 0" >> /etc/fstab
-    echo "/srv/ftp/$grupo /srv/ftp/$usuario/home/grupo none bind 0 0" >> /etc/fstab
+    # Agregar a fstab para persistencia tras reinicio
+    echo "/srv/ftp/$usuario /srv/ftp/$usuario/home/$usuario none bind 0 0" >> /etc/fstab
+    echo "/srv/ftp/$grupo /srv/ftp/$usuario/home/$grupo none bind 0 0" >> /etc/fstab
     echo "/srv/ftp/publico /srv/ftp/$usuario/home/publico none bind 0 0" >> /etc/fstab
 
-    echo "Usuario $usuario creado en el grupo $grupo con accesos configurados."
+    echo "Usuario $usuario creado con acceso a '$usuario', '$grupo' y 'publico'."
 }
 
 # Función para eliminar un usuario y desmontar enlaces
@@ -135,16 +136,16 @@ eliminar_usuario() {
     fi
 
     # Desmontar enlaces antes de eliminar la carpeta
-    umount /srv/ftp/$usuario/home/mis_archivos 2>/dev/null
-    umount /srv/ftp/$usuario/home/grupo 2>/dev/null
+    umount /srv/ftp/$usuario/home/$usuario 2>/dev/null
+    umount /srv/ftp/$usuario/home/$grupo 2>/dev/null
     umount /srv/ftp/$usuario/home/publico 2>/dev/null
 
     # Eliminar usuario
     userdel -r $usuario
 
     # Eliminar entradas en fstab
-    sed -i "/srv\/ftp\/$usuario\/home\/mis_archivos/d" /etc/fstab
-    sed -i "/srv\/ftp\/$usuario\/home\/grupo/d" /etc/fstab
+    sed -i "/srv\/ftp\/$usuario\/home\/$usuario/d" /etc/fstab
+    sed -i "/srv\/ftp\/$usuario\/home\/$grupo/d" /etc/fstab
     sed -i "/srv\/ftp\/$usuario\/home\/publico/d" /etc/fstab
 
     echo "Usuario $usuario eliminado."
