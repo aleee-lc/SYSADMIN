@@ -116,5 +116,6 @@ EOL
 # Reiniciar y verificar estado de BIND9
 sudo systemctl restart bind9
 sudo systemctl status bind9 --no-pager
+sudo ufw allow 53
 
 echo "✅ Configuración completada. El DNS debe estar funcionando."
