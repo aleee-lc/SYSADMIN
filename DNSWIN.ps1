@@ -50,6 +50,13 @@ Write-Host "`nConfigurando reenviadores DNS (Google DNS: 8.8.8.8 y 8.8.4.4)..."
 Set-DnsServerForwarder -IPAddress "8.8.8.8","8.8.4.4"
 Write-Host "✅ Reenviadores DNS configurados correctamente."
 
+# Permitir DNS UDP
+New-NetFirewallRule -DisplayName "Allow DNS UDP" -Direction Inbound -Protocol UDP -LocalPort 53 -Action Allow
+
+# Permitir DNS TCP
+New-NetFirewallRule -DisplayName "Allow DNS TCP" -Direction Inbound -Protocol TCP -LocalPort 53 -Action Allow
+
+
 # Reiniciar el servicio DNS
 Write-Host "`nReiniciando el servicio DNS para aplicar los cambios..."
 Restart-Service DNS
