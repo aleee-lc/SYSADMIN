@@ -1,7 +1,7 @@
 # Ejecutar como administrador
 
 # ===================== CONFIGURACIÓN =====================
-$Interfaz     = "Ethernet1"            # Reemplaza con el nombre real (usa Get-NetAdapter)
+$Interfaz     = "Ethernet"            # Reemplaza con el nombre real (usa Get-NetAdapter)
 $IpFija       = "192.168.56.5"
 $Gateway      = "192.168.56.1"
 $DnsDomain    = "reprobados.com"
