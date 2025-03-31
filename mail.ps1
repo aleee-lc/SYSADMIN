@@ -1,3 +1,8 @@
+$MailDir = "C:\MailServer"
+$InboxDir = "$MailDir\Inbox"
+$ConfigDir = "$MailDir\Config"
+$LogDir = "$MailDir\Logs"
+
 function Validar-Dominio($dominio) {
     return $dominio -match "^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
 }
@@ -17,17 +22,33 @@ function Solicitar-Puertos {
         return @{ SMTP = 25; POP3 = 110 }
     } else {
         $smtp = Read-Host "Puerto SMTP (recomendado 25)"
-        $pop3 = Read-Host "Puerto POP3 (no funcional, pero requerido)"
+        $pop3 = Read-Host "Puerto POP3 (solo simulado, recomendado 110)"
         return @{ SMTP = [int]$smtp; POP3 = [int]$pop3 }
     }
 }
 
-function Instalar-SMTPServer {
-    Write-Host "Instalando SMTP Server..."
-    Install-WindowsFeature SMTP-Server, RSAT-SMTP
-    Start-Service SMTPSVC
-    Set-Service SMTPSVC -StartupType Automatic
-    Write-Host "SMTP Server instalado y en ejecución."
+function Preparar-Estructura {
+    Write-Host "Creando estructura de carpetas..."
+    New-Item -ItemType Directory -Path $InboxDir -Force | Out-Null
+    New-Item -ItemType Directory -Path $ConfigDir -Force | Out-Null
+    New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
+}
+
+function Instalar-SMTP {
+    Write-Host "Descargando nssmtp (servidor SMTP)..."
+    $nssmtpPath = "$MailDir\nssmtp.exe"
+    Invoke-WebRequest -Uri "https://github.com/andysan/nssmtp/releases/download/v2.0/nssmtp.exe" -OutFile $nssmtpPath
+
+    Write-Host "Configurando nssmtp..."
+    @"
+listen=0.0.0.0
+port=$($puertos.SMTP)
+logfile=$LogDir\smtp.log
+inboxdir=$InboxDir
+"@ | Set-Content -Path "$ConfigDir\nssmtp.ini"
+
+    Write-Host "Iniciando nssmtp..."
+    Start-Process -FilePath $nssmtpPath -ArgumentList "-config $ConfigDir\nssmtp.ini" -NoNewWindow
 }
 
 function Configurar-Firewall($puertos) {
@@ -42,12 +63,13 @@ function Gestionar-Usuarios {
         Write-Host ""
         Write-Host "1) Crear usuario"
         Write-Host "2) Eliminar usuario"
-        Write-Host "3) Salir"
+        Write-Host "3) Leer correos (POP3 simulado)"
+        Write-Host "4) Salir"
         $opcion = Read-Host "Seleccione una opción"
         switch ($opcion) {
             '1' {
                 $user = Read-Host "Nombre de usuario"
-                $plain = Read-Host "Contraseña (mínimo: 8 caracteres, mayúscula, número)"
+                $plain = Read-Host "Contraseña"
                 $pass = ConvertTo-SecureString $plain -AsPlainText -Force
 
                 if (-not (Get-LocalUser -Name $user -ErrorAction SilentlyContinue)) {
@@ -68,25 +90,47 @@ function Gestionar-Usuarios {
                 Remove-LocalUser -Name $user -ErrorAction SilentlyContinue
                 Write-Host "Usuario $user eliminado"
             }
-            '3' { break }
+
+            '3' {
+                Leer-Buzon
+            }
+
+            '4' { break }
+
             default { Write-Host "Opción no válida" }
         }
     } while ($true)
 }
 
-function Main {
-    $dominio = Solicitar-Dominio
-    $puertos = Solicitar-Puertos
+function Leer-Buzon {
+    Write-Host "`nBandeja de entrada: $InboxDir"
+    $mails = Get-ChildItem $InboxDir | Sort-Object LastWriteTime -Descending
+    if ($mails.Count -eq 0) {
+        Write-Host "No hay correos recibidos."
+        return
+    }
 
-    Instalar-SMTPServer
+    foreach ($mail in $mails) {
+        Write-Host "`nArchivo: $($mail.Name)"
+        Get-Content $mail.FullName -TotalCount 20
+        Write-Host "`nPresione ENTER para continuar..."
+        Read-Host | Out-Null
+    }
+}
+
+function Main {
+    $global:dominio = Solicitar-Dominio
+    $global:puertos = Solicitar-Puertos
+
+    Preparar-Estructura
+    Instalar-SMTP
     Configurar-Firewall -puertos $puertos
     Gestionar-Usuarios
 
     Write-Host ""
-    Write-Host "Servidor de correo básico configurado."
-    Write-Host "SMTP disponible en puerto: $($puertos.SMTP)"
-    Write-Host "Nota: POP3 no está disponible de forma nativa en Server Core."
-    Write-Host "Puede usar un servidor POP3 externo o contenedor Docker si lo necesita."
+    Write-Host "Servidor SMTP activo. Correos se almacenan en: $InboxDir"
+    Write-Host "SMTP escuchando en puerto: $($puertos.SMTP)"
+    Write-Host "POP3 no real: puede consultar correos mediante opción 3 del menú"
 }
 
 Main
