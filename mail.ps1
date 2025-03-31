@@ -70,15 +70,22 @@ function Gestionar-Usuarios {
         switch ($opcion) {
             '1' {
                 $user = Read-Host "Nombre de usuario"
-                $pass = Read-Host "Contraseña" -AsSecureString
+                $plain = Read-Host "Contraseña (mínimo: 8 caracteres, mayúscula, número)"
+                $pass = ConvertTo-SecureString $plain -AsPlainText -Force
+
                 if (-not (Get-LocalUser -Name $user -ErrorAction SilentlyContinue)) {
-                    New-LocalUser -Name $user -Password $pass -FullName $user -PasswordNeverExpires:$true
-                    Add-LocalGroupMember -Group "Users" -Member $user
-                    Write-Host "Usuario $user creado"
+                    try {
+                        New-LocalUser -Name $user -Password $pass -FullName $user -PasswordNeverExpires:$true
+                        Add-LocalGroupMember -Group "Users" -Member $user
+                        Write-Host "Usuario $user creado correctamente." -ForegroundColor Green
+                    } catch {
+                        Write-Host "❌ Error al crear usuario: $_" -ForegroundColor Red
+                    }
                 } else {
-                    Write-Host "El usuario ya existe." -ForegroundColor Yellow
+                    Write-Host "⚠️ El usuario ya existe." -ForegroundColor Yellow
                 }
             }
+
             '2' {
                 $user = Read-Host "Nombre de usuario a eliminar"
                 Remove-LocalUser -Name $user -ErrorAction SilentlyContinue
