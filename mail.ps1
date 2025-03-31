@@ -37,6 +37,28 @@ function Preparar-Estructura {
 function Instalar-SMTP {
     Write-Host "Descargando nssmtp (servidor SMTP)..."
     $nssmtpPath = "$MailDir\nssmtp.exe"
+    # Sobrescribir la política de certificados SSL para evitar problemas con certificados no confiables
+    add-type @"
+    using System.Net;
+    using System.Security.Cryptography.X509Certificates;
+    public class TrustAllCertsPolicy : ICertificatePolicy {
+        public bool CheckValidationResult(ServicePoint srvPoint, X509Certificate certificate, WebRequest request, int certificateProblem) {
+            return true;
+        }
+    }
+"@
+[System.Net.ServicePointManager]::CertificatePolicy = New-Object TrustAllCertsPolicy
+    # Sobrescribir la política de certificados SSL para evitar problemas con certificados no confiables
+    add-type @"
+    using System.Net;
+    using System.Security.Cryptography.X509Certificates;
+    public class TrustAllCertsPolicy : ICertificatePolicy {
+        public bool CheckValidationResult(ServicePoint srvPoint, X509Certificate certificate, WebRequest request, int certificateProblem) {
+            return true;
+        }
+    }
+"@
+[System.Net.ServicePointManager]::CertificatePolicy = New-Object TrustAllCertsPolicy
     Invoke-WebRequest -Uri "https://github.com/andysan/nssmtp/releases/download/v2.0/nssmtp.exe" -OutFile $nssmtpPath
 
     Write-Host "Configurando nssmtp..."
