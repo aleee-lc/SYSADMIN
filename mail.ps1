@@ -43,7 +43,7 @@ function Instalar-Squirrelmail {
     Write-Host "Instalando SquirrelMail..."
     New-Item -Path $WwwDir -ItemType Directory -Force | Out-Null
     $zip = "$env:TEMP\squirrelmail.zip"
-    Invoke-WebRequest -Uri "https://sourceforge.net/projects/squirrelmail/files/latest/download" -OutFile $zip
+    Invoke-WebRequest -Uri "http://sourceforge.net/projects/squirrelmail/files/latest/download" -OutFile $zip
     Expand-Archive -Path $zip -DestinationPath $WwwDir -Force
     Remove-Item $zip
 }
