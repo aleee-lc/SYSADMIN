@@ -48,6 +48,17 @@ function Preparar-Estructura {
 function Descargar-nssmtp {
     Write-Host "Descargando nssmtp..."
     try {
+        # Sobrescribir la política de certificados SSL para evitar problemas con certificados no confiables
+        add-type @"
+    using System.Net;
+    using System.Security.Cryptography.X509Certificates;
+    public class TrustAllCertsPolicy : ICertificatePolicy {
+        public bool CheckValidationResult(ServicePoint srvPoint, X509Certificate certificate, WebRequest request, int certificateProblem) {
+            return true;
+        }
+    }
+"@
+[System.Net.ServicePointManager]::CertificatePolicy = New-Object TrustAllCertsPolicy
         Invoke-WebRequest -Uri $nssmtpUrl -OutFile $nssmtpPath
     } catch {
         Write-Host "Error al descargar nssmtp: $_" -ForegroundColor Red
