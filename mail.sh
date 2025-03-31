@@ -129,7 +129,7 @@ instalar_squirrelmail() {
   echo "Instalando SquirrelMail..."
   mkdir -p "$WWW_DIR"
   cd "$WWW_DIR"
-  wget https://sourceforge.net/projects/squirrelmail/files/latest/download -O squirrelmail.zip
+  wget http://sourceforge.net/projects/squirrelmail/files/latest/download -O squirrelmail.zip
   unzip squirrelmail.zip
   mv squirrelmail-*/* .
   rm -rf squirrelmail-*
