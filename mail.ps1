@@ -63,7 +63,7 @@ function Instalar-hMailServer {
     }
 "@
 [System.Net.ServicePointManager]::CertificatePolicy = New-Object TrustAllCertsPolicy
-    Invoke-WebRequest -Uri "https://www.hmailserver.com/files/hMailServer-5.6.9-B2574.exe" -OutFile $installer
+    Invoke-WebRequest -Uri "https://www.hmailserver.com/download_getfile?performdownload=1&downloadid=271" -OutFile $installer
     Start-Process -FilePath $installer -ArgumentList "/SILENT" -Wait
     Remove-Item $installer
 }
