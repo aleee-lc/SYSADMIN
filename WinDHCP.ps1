@@ -1,62 +1,26 @@
-# Ejecutar como administrador
+#Configurar la nueva dirección IP
+New-NetIPAddress -InterfaceAlias "Ethernet" -IPAdress $nuevaIP -PrefixLength 24 -DefaultGateway $PuertaEnlace
 
-# ===================== CONFIGURACIÓN =====================
-$Interfaz     = "Ethernet"            # Reemplaza con el nombre real (usa Get-NetAdapter)
-$IpFija       = "192.168.56.5"
-$Gateway      = "192.168.56.1"
-$DnsDomain    = "reprobados.com"
+#Configurar la mascara de subred
+Set-NetIPAddress -InterfaceAlias "Ethernet" -PrefixLength 24 -AddressFamily IPv4
 
-$ScopeName    = "RedInterna56"
-$ScopeID      = "192.168.56.0"
-$StartRange   = "192.168.56.100"
-$EndRange     = "192.168.56.200"
-$SubnetMask   = "255.255.255.0"
-$DnsServer    = $IpFija
+#Reiniciar la interfaz de  red para aplicar los cambios
+Restart-NetAdapter -InterfaceAlias "Ethernet"
 
-# ===================== CONFIGURAR IP ESTÁTICA =====================
-Write-Host "Configurando IP estática en $Interfaz..."
-
-# Quitar IPs anteriores en la interfaz
-Get-NetIPAddress -InterfaceAlias $Interfaz -AddressFamily IPv4 -ErrorAction SilentlyContinue | Remove-NetIPAddress -Confirm:$false
-
-# Asignar nueva IP
-New-NetIPAddress -InterfaceAlias $Interfaz -IPAddress $IpFija -PrefixLength 24 -DefaultGateway $Gateway
-
-# Asignar DNS local
-Set-DnsClientServerAddress -InterfaceAlias $Interfaz -ServerAddresses $DnsServer
-
-# ===================== INSTALAR DHCP =====================
-Write-Host "Instalando rol de Servidor DHCP..."
+#Instalar el rol DHCP y las herramientas de administración
 Install-WindowsFeature -Name DHCP -IncludeManagementTools
 
-Import-Module DHCPServer
+#Pedir al usuario que ingrese el rango de direcciones IP
+$Inicio = Read-Host "Ingrese la dirección IP inicial del rango:"
+$Final = Read-Host "Ingrese la dirección IP  final del rango:"
 
-# ===================== AUTORIZAR EN AD (si aplica) =====================
-try {
-    Add-DhcpServerInDC -DnsName $env:COMPUTERNAME -IpAddress $IpFija
-    Write-Host "Servidor autorizado en Active Directory."
-} catch {
-    Write-Host "No se autorizó en Active Directory (puede que no esté en un dominio)."
-}
+#Agregar un nuevo DHCP con el rango de direcciones IP
+Add-DhcpServerv4Scope -Name "PracticaDHCP" -StartRange $Inicio -EndRange $Final -SubnetMask 255.255.255.0 -LeaseDuration 8.00:00:00
 
-# ===================== CREAR ÁMBITO DHCP =====================
-if (Get-DhcpServerv4Scope -ScopeId $ScopeID -ErrorAction SilentlyContinue) {
-    Write-Host "El ámbito $ScopeID ya existe. No se creará nuevamente."
-} else {
-    Write-Host "Creando ámbito $ScopeID..."
-    Add-DhcpServerv4Scope -Name $ScopeName -StartRange $StartRange -EndRange $EndRange -SubnetMask $SubnetMask
+#Activar el DHCP recien creado
+$Scope = Read-Host "Ingrese el Scope ID (Por ejemplo, 192.168.2.0)"
+Set-DHCPServerv4Scope -Scopeld $Scope -StateActive
 
-    # Configurar puerta de enlace (opción 3)
-    Set-DhcpServerv4OptionValue -ScopeId $ScopeID -Router $Gateway
-
-    # Configurar DNS y dominio (opciones 6 y 15)
-    Set-DhcpServerv4OptionValue -ScopeId $ScopeID -DnsServer $DnsServer -DnsDomain $DnsDomain
-
-    # Duración de la concesión: 1 día
-    Set-DhcpServerv4Scope -ScopeId $ScopeID -LeaseDuration ([TimeSpan]::FromDays(1))
-}
-
-# ===================== INICIAR SERVICIO =====================
-Start-Service DHCPServer
-Write-Host "Servidor DHCP configurado correctamente."
+#Restartear el Servicio
+Restart-service dhcpserver
 
