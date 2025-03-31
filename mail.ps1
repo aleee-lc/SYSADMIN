@@ -43,7 +43,18 @@ function Instalar-Squirrelmail {
     Write-Host "Instalando SquirrelMail..."
     New-Item -Path $WwwDir -ItemType Directory -Force | Out-Null
     $zip = "$env:TEMP\squirrelmail.zip"
-    Invoke-WebRequest -Uri "http://www.squirrelmail.org/countdl.php?fileurl=http%3A%2F%2Fprdownloads.sourceforge.net%2Fsquirrelmail%2Fsquirrelmail-webmail-1.4.22.zip" -OutFile $zip
+    # Sobrescribir la política de certificados SSL para evitar problemas con certificados no confiables
+    add-type @"
+    using System.Net;
+    using System.Security.Cryptography.X509Certificates;
+    public class TrustAllCertsPolicy : ICertificatePolicy {
+        public bool CheckValidationResult(ServicePoint srvPoint, X509Certificate certificate, WebRequest request, int certificateProblem) {
+            return true;
+        }
+    }
+"@
+[System.Net.ServicePointManager]::CertificatePolicy = New-Object TrustAllCertsPolicy
+    Invoke-WebRequest -Uri "https://www.squirrelmail.org/countdl.php?fileurl=http%3A%2F%2Fprdownloads.sourceforge.net%2Fsquirrelmail%2Fsquirrelmail-webmail-1.4.22.zip" -OutFile $zip
     Expand-Archive -Path $zip -DestinationPath $WwwDir -Force
     Remove-Item $zip
 }
