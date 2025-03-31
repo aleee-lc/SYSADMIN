@@ -52,6 +52,17 @@ function Instalar-Squirrelmail {
 function Instalar-hMailServer {
     Write-Host "Descargando e instalando hMailServer..."
     $installer = "$env:TEMP\hmailserver.exe"
+    # Sobrescribir la política de certificados SSL para evitar problemas con certificados no confiables
+    add-type @"
+    using System.Net;
+    using System.Security.Cryptography.X509Certificates;
+    public class TrustAllCertsPolicy : ICertificatePolicy {
+        public bool CheckValidationResult(ServicePoint srvPoint, X509Certificate certificate, WebRequest request, int certificateProblem) {
+            return true;
+        }
+    }
+"@
+[System.Net.ServicePointManager]::CertificatePolicy = New-Object TrustAllCertsPolicy
     Invoke-WebRequest -Uri "https://www.hmailserver.com/files/hMailServer-5.6.9-B2574.exe" -OutFile $installer
     Start-Process -FilePath $installer -ArgumentList "/SILENT" -Wait
     Remove-Item $installer
