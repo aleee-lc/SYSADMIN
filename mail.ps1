@@ -1,20 +1,17 @@
-# Configurar el protocolo de seguridad para usar TLS 1.2
+# Configurar TLS 1.2 para conexiones seguras
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-# Definir rutas y variables
 $MailDir = "C:\MailServer"
 $InboxDir = "$MailDir\Inbox"
 $ConfigDir = "$MailDir\Config"
 $LogDir = "$MailDir\Logs"
 $nssmtpPath = "$MailDir\nssmtp.exe"
-$nssmtpUrl = "https://github.com/andysan/nssmtp/releases/download/v2.0/nssmtp.exe"
+$nssmPath = "$MailDir\nssm.exe"
 
-# Función para validar dominio
 function Validar-Dominio($dominio) {
     return $dominio -match "^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
 }
 
-# Función para solicitar dominio
 function Solicitar-Dominio {
     do {
         $MailDomain = Read-Host "Ingrese el nombre de dominio para su servidor (ej: reprobados.com)"
@@ -24,7 +21,6 @@ function Solicitar-Dominio {
     return $MailDomain
 }
 
-# Función para solicitar puertos
 function Solicitar-Puertos {
     $usarDefault = Read-Host "¿Desea usar puertos por defecto? (s/n)"
     if ($usarDefault -match '^[sS]$') {
@@ -36,7 +32,6 @@ function Solicitar-Puertos {
     }
 }
 
-# Función para preparar la estructura de carpetas
 function Preparar-Estructura {
     Write-Host "Creando estructura de carpetas..."
     New-Item -ItemType Directory -Path $InboxDir -Force | Out-Null
@@ -44,29 +39,31 @@ function Preparar-Estructura {
     New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
 }
 
-# Función para descargar nssmtp
 function Descargar-nssmtp {
     Write-Host "Descargando nssmtp..."
     try {
-        # Sobrescribir la política de certificados SSL para evitar problemas con certificados no confiables
-        add-type @"
-    using System.Net;
-    using System.Security.Cryptography.X509Certificates;
-    public class TrustAllCertsPolicy : ICertificatePolicy {
-        public bool CheckValidationResult(ServicePoint srvPoint, X509Certificate certificate, WebRequest request, int certificateProblem) {
-            return true;
-        }
-    }
-"@
-[System.Net.ServicePointManager]::CertificatePolicy = New-Object TrustAllCertsPolicy
-        Invoke-WebRequest -Uri $nssmtpUrl -OutFile $nssmtpPath
+        Invoke-WebRequest -Uri "https://github.com/andysan/nssmtp/releases/download/v2.0/nssmtp.exe" -OutFile $nssmtpPath
     } catch {
         Write-Host "Error al descargar nssmtp: $_" -ForegroundColor Red
         exit
     }
 }
 
-# Función para configurar nssmtp
+function Descargar-NSSM {
+    Write-Host "Descargando NSSM..."
+    $nssmZip = "$MailDir\nssm.zip"
+    $nssmDir = "$MailDir\nssm"
+    try {
+        Invoke-WebRequest -Uri "https://nssm.cc/release/nssm-2.24.zip" -OutFile $nssmZip
+        Expand-Archive -Path $nssmZip -DestinationPath $nssmDir -Force
+        Copy-Item "$nssmDir\nssm-2.24\win64\nssm.exe" -Destination $nssmPath -Force
+        Remove-Item $nssmZip
+    } catch {
+        Write-Host "Error al descargar o extraer NSSM: $_" -ForegroundColor Red
+        exit
+    }
+}
+
 function Configurar-nssmtp {
     Write-Host "Configurando nssmtp..."
     @"
@@ -77,18 +74,22 @@ inboxdir=$InboxDir
 "@ | Set-Content -Path "$ConfigDir\nssmtp.ini"
 }
 
-# Función para iniciar nssmtp
-function Iniciar-nssmtp {
-    Write-Host "Iniciando nssmtp..."
-    if (Test-Path $nssmtpPath) {
-        Start-Process -FilePath $nssmtpPath -ArgumentList "-config $ConfigDir\nssmtp.ini" -NoNewWindow
-    } else {
-        Write-Host "El archivo nssmtp.exe no se encontró en la ruta especificada." -ForegroundColor Red
+function Crear-Servicio-SMTP {
+    $svcName = "SMTP_MailService"
+    if (-not (Test-Path $nssmPath)) {
+        Write-Host "NSSM no encontrado. Abortando registro de servicio." -ForegroundColor Red
         exit
     }
+    if (-not (Test-Path $nssmtpPath)) {
+        Write-Host "nssmtp.exe no encontrado. Verifica la descarga previa." -ForegroundColor Red
+        exit
+    }
+    Write-Host "Registrando servicio '$svcName' con NSSM..."
+    & $nssmPath install $svcName $nssmtpPath "-config $ConfigDir\nssmtp.ini"
+    Start-Service $svcName
+    Set-Service $svcName -StartupType Automatic
 }
 
-# Función para configurar el firewall
 function Configurar-Firewall($puertos) {
     Write-Host "Configurando reglas de firewall..."
     foreach ($p in $puertos.Values) {
@@ -96,7 +97,6 @@ function Configurar-Firewall($puertos) {
     }
 }
 
-# Función para gestionar usuarios
 function Gestionar-Usuarios {
     do {
         Write-Host ""
@@ -110,7 +110,6 @@ function Gestionar-Usuarios {
                 $user = Read-Host "Nombre de usuario"
                 $plain = Read-Host "Contraseña"
                 $pass = ConvertTo-SecureString $plain -AsPlainText -Force
-
                 if (-not (Get-LocalUser -Name $user -ErrorAction SilentlyContinue)) {
                     try {
                         New-LocalUser -Name $user -Password $pass -FullName $user -PasswordNeverExpires:$true
@@ -123,25 +122,20 @@ function Gestionar-Usuarios {
                     Write-Host "El usuario ya existe." -ForegroundColor Yellow
                 }
             }
-
             '2' {
                 $user = Read-Host "Nombre de usuario a eliminar"
                 Remove-LocalUser -Name $user -ErrorAction SilentlyContinue
                 Write-Host "Usuario $user eliminado"
             }
-
             '3' {
                 Leer-Buzon
             }
-
             '4' { break }
-
             default { Write-Host "Opción no válida" }
         }
     } while ($true)
 }
 
-# Función para leer el buzón (POP3 simulado)
 function Leer-Buzon {
     Write-Host "`nBandeja de entrada: $InboxDir"
     $mails = Get-ChildItem $InboxDir | Sort-Object LastWriteTime -Descending
@@ -149,7 +143,6 @@ function Leer-Buzon {
         Write-Host "No hay correos recibidos."
         return
     }
-
     foreach ($mail in $mails) {
         Write-Host "`nArchivo: $($mail.Name)"
         Get-Content $mail.FullName -TotalCount 20
@@ -158,23 +151,20 @@ function Leer-Buzon {
     }
 }
 
-# Función principal
 function Main {
     $global:dominio = Solicitar-Dominio
     $global:puertos = Solicitar-Puertos
-
     Preparar-Estructura
     Descargar-nssmtp
+    Descargar-NSSM
     Configurar-nssmtp
-    Iniciar-nssmtp
+    Crear-Servicio-SMTP
     Configurar-Firewall -puertos $puertos
     Gestionar-Usuarios
-
     Write-Host ""
     Write-Host "Servidor SMTP activo. Los correos se almacenan en: $InboxDir"
     Write-Host "SMTP escuchando en el puerto: $($puertos.SMTP)"
     Write-Host "POP3 simulado: puede consultar correos mediante la opción 3 del menú"
 }
 
-main
-
+Main
