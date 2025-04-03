@@ -46,5 +46,4 @@ Write-Host "1. Visual C++ 2013 Redistributable (https://aka.ms/vs2013redist)"
 Write-Host "2. UCMA 4.0 Runtime (https://www.microsoft.com/en-us/download/details.aspx?id=34992)"
 Write-Host "3. IIS URL Rewrite Module (https://www.iis.net/downloads/microsoft/url-rewrite)"
 
-Write-Host "`nReiniciando sistema para aplicar cambios..." -ForegroundColor Cyan
 Restart-Computer
