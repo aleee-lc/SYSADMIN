@@ -250,7 +250,7 @@ fi
 echo " === SERVIDOR DE CORREO === "
 sudo apt update
 # Configurar servidor DNS 
-echo "Configurando servidor DNS en paulook.com...."
+echo "Configurando servidor DNS en alecloud.com ....."
 ip_fija="192.168.171.132"
 dominio="alecloud.com"
 
