@@ -1,188 +1,291 @@
-#!/bin/bash
+# !/bin/bash
+# correo/verificar_servicio.sh
 
-# Variables globales
-CERT_DIR="/etc/ssl/certs/mail"
-WWW_DIR="/var/www/html/squirrelmail"
 
-# Validar dominio
-validar_dominio() {
-  if [[ ! "$1" =~ ^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
-    echo "Dominio no valido. Ejemplo valido: reprobados.com"
-    return 1
-  fi
-  return 0
+verificar_servicio (){
+    local servicio="$1"
+
+    # Verificar si el paquete está instalado
+    if dpkg -l | grep -q "^ii  $servicio"; then
+        return 0 # Servicio instalado
+    fi
+    return 1 # No esta instalado
 }
 
-# Solicitar dominio con validacion
-solicitar_dominio() {
-  while true; do
-    read -p "Ingrese el nombre de dominio para su servidor (ej: reprobados.com): " MAIL_DOMAIN
-    validar_dominio "$MAIL_DOMAIN" && break
-  done
+
+
+
+crear_user(){
+    local user="$1"
+    
+    # Crear el usuario con su directorio home
+    echo "Creando usuario $user..."
+    sudo useradd -m -s /bin/bash $user
+
+    solicitar_contra "$user"
+    
+    sudo usermod -m -d /var/www/html/$user $user
+    sudo mkdir -p /var/www/html/$user
 }
 
-# Solicitar puertos personalizados
-solicitar_puertos() {
-  read -p "Desea usar puertos por defecto? (s/n): " usar_default
-  if [[ "$usar_default" =~ ^[sS]$ ]]; then
-    PORT_SMTP=587
-    PORT_POP3=110
-    PORT_IMAP=993
-  else
-    read -p "Puerto SMTP (recomendado 587): " PORT_SMTP
-    read -p "Puerto POP3 (recomendado 110): " PORT_POP3
-    read -p "Puerto IMAP (recomendado 993): " PORT_IMAP
-  fi
-}
 
-# Instalar paquetes necesarios
-instalar_paquetes() {
-  echo "Instalando paquetes necesarios..."
-  apt update
-  DEBIAN_FRONTEND=noninteractive apt install -y postfix dovecot-core dovecot-imapd dovecot-pop3d mailutils mutt apache2 php php-mbstring unzip wget ufw
-}
 
-# Generar certificado SSL
-generar_certificado_ssl() {
-  echo "Generando certificado SSL..."
-  mkdir -p "$CERT_DIR"
-  openssl req -new -x509 -days 365 -nodes \
-    -out "$CERT_DIR/mailcert.pem" \
-    -keyout "$CERT_DIR/mailkey.pem" \
-    -subj "/C=MX/ST=Estado/L=Ciudad/O=MiServidor/CN=mail.$MAIL_DOMAIN"
-}
 
-# Configurar Postfix
-configurar_postfix() {
-  echo "Configurando Postfix..."
-  postconf -e "myhostname = mail.$MAIL_DOMAIN"
-  postconf -e "myorigin = /etc/mailname"
-  postconf -e "mydestination = \$myhostname, localhost.\$mydomain, localhost"
-  postconf -e "inet_interfaces = all"
-  postconf -e "inet_protocols = ipv4"
-  postconf -e "home_mailbox = Maildir/"
-  postconf -e "smtpd_tls_cert_file = $CERT_DIR/mailcert.pem"
-  postconf -e "smtpd_tls_key_file = $CERT_DIR/mailkey.pem"
-  postconf -e "smtpd_use_tls = yes"
-  postconf -e "smtp_tls_security_level = may"
-  postconf -e "smtpd_tls_session_cache_database = btree:\${data_directory}/smtpd_scache"
-  echo "$MAIL_DOMAIN" > /etc/mailname
-}
 
-# Configurar Dovecot
-configurar_dovecot() {
-  echo "Configurando Dovecot..."
-  sed -i 's|^#*\s*mail_location =.*|mail_location = maildir:~/Maildir|' /etc/dovecot/conf.d/10-mail.conf
-  sed -i 's|^#*\s*ssl =.*|ssl = required|' /etc/dovecot/conf.d/10-ssl.conf
-  sed -i "s|^#*\s*ssl_cert =.*|ssl_cert = <$CERT_DIR/mailcert.pem|" /etc/dovecot/conf.d/10-ssl.conf
-  sed -i "s|^#*\s*ssl_key =.*|ssl_key = <$CERT_DIR/mailkey.pem|" /etc/dovecot/conf.d/10-ssl.conf
-  sed -i 's|^#*\s*disable_plaintext_auth =.*|disable_plaintext_auth = no|' /etc/dovecot/conf.d/10-auth.conf
-  sed -i 's|^#*\s*protocols =.*|protocols = imap pop3|' /etc/dovecot/dovecot.conf
+conf_dns(){
+    local ip="$1"
+    local dominio="$2"
+    #Instalar bind9
 
-  cat <<EOF > /etc/dovecot/conf.d/auth-postfix.conf.ext
-service auth {
-  unix_listener /var/spool/postfix/private/auth {
-    mode = 0660
-    user = postfix
-    group = postfix
-  }
-}
+    # Verifica antes de instalar bin9
+    #if verificar_servicio "bind9"; then
+    #    echo "Bind9 ya esta instalado y configurado"
+    #    return
+    #fi
+
+    echo "Instalando bind9"
+    sudo apt-get install bind9 bind9utils bind9-doc -y
+    sudo apt-get install dnsutils -y
+
+    #Editar named.conf.local para las zonas
+    echo "Configurando zonas"
+    sudo tee -a /etc/bind/named.conf.local > /dev/null <<EOF
+    zone "$dominio" {
+        type master;
+        file "/etc/bind/db.$dominio";
+    };
+
+    zone "$(echo $ip | awk -F. '{print $3"."$2"."$1}').in-addr.arpa" {
+        type master;
+        file "/etc/bind/db.$(echo $ip | awk -F. '{print $3"."$2"."$1}')";
+    };
 EOF
 
-  grep -q 'auth-postfix.conf.ext' /etc/dovecot/conf.d/10-master.conf || echo '!include auth-postfix.conf.ext' >> /etc/dovecot/conf.d/10-master.conf
-}
-
-# Crear usuario
-gestionar_usuarios() {
-  while true; do
-    echo "1) Crear usuario"
-    echo "2) Eliminar usuario"
-    echo "3) Salir"
-    read -p "Seleccione una opcion: " opcion
-    case $opcion in
-      1)
-        read -p "Nombre de usuario: " user
-        read -s -p "Contraseña: " pass
-        echo
-        id "$user" &>/dev/null || useradd -m "$user"
-        echo "$user:$pass" | chpasswd
-        runuser -l "$user" -c 'mkdir -p ~/Maildir && chmod -R 700 ~/Maildir'
-        echo "Usuario $user creado"
-        ;;
-      2)
-        read -p "Nombre de usuario a eliminar: " user
-        userdel -r "$user"
-        echo "Usuario $user eliminado"
-        ;;
-      3)
-        break
-        ;;
-      *)
-        echo "Opcion no valida"
-        ;;
-    esac
-  done
-}
-
-# Instalar SquirrelMail
-instalar_squirrelmail() {
-  echo "Instalando SquirrelMail..."
-  mkdir -p "$WWW_DIR"
-  cd "$WWW_DIR"
-  wget http://sourceforge.net/projects/squirrelmail/files/latest/download -O squirrelmail.zip
-  unzip squirrelmail.zip
-  mv squirrelmail-*/* .
-  rm -rf squirrelmail-*
-
-  cat <<EOF > /etc/apache2/sites-available/squirrelmail.conf
-Alias /squirrelmail $WWW_DIR
-<Directory $WWW_DIR>
-    Options Indexes FollowSymLinks
-    AllowOverride All
-    Require all granted
-</Directory>
+#Crear zona directa
+echo "Creando zona directa"
+sudo tee /etc/bind/db.$dominio > /dev/null <<EOF
+\$TTL    604800
+@       IN      SOA     $dominio. root.$dominio. (
+                              2         ; Serial
+                         604800         ; Refresh
+                          86400         ; Retry
+                        2419200         ; Expire
+                         604800 )       ; Negative Cache TTL
+;
+@           IN      NS      $dominio.
+servidor    IN      A       $ip
+@           IN      A       $ip
+www         IN      CNAME   $dominio.
 EOF
 
-  a2ensite squirrelmail
-  systemctl reload apache2
+#Crear zona inversa
+echo "Creando zona inversa"
+sudo tee /etc/bind/db.$(echo $ip | awk -F. '{print $3"."$2"."$1}') > /dev/null <<EOF
+\$TTL    604800
+@       IN      SOA     $dominio. root.$dominio. (
+                              2         ; Serial
+                         604800         ; Refresh
+                          86400         ; Retry
+                        2419200         ; Expire
+                         604800 )       ; Negative Cache TTL
+;
+@       IN      NS      $dominio.
+$(echo $ip | awk -F. '{print $4}')     IN      PTR     $dominio.
+EOF
+
+    #Editar resolv.conf para fijar la IP en el servidor DNS
+    sudo sed -i "/^search /c\search $dominio" /etc/resolv.conf    #Utilizo sed -i para modificar especificamente esa linea
+    sudo sed -i "/^nameserver /c\nameserver $ip" /etc/resolv.conf
+    echo "Fijando la IP $ip para el servidor DNS"
+
+    #Reiniciar bind9
+    echo "Reiniciando bind9"
+    sudo systemctl restart bind9
+    echo "Configuración finalizada :)"
 }
 
-# Configurar firewall
-configurar_firewall() {
-  echo "Configurando UFW para permitir puertos..."
-  ufw allow "$PORT_SMTP"
-  ufw allow "$PORT_POP3"
-  ufw allow "$PORT_IMAP"
-  ufw allow 80
-  ufw --force enable
+
+# correo/conf_correo.sh
+
+conf_correo(){
+    dominio="paulook.com"
+    ip="192.168.1.10"
+    # Actualiza la lista de paquetes 
+    sudo apt update 
+    sudo apt-get install apache2 -y
+    
+    sudo apt install software-properties-common -y
+    sudo add-apt-repository ppa:ondrej/php -y
+    sudo apt update
+    sudo apt install php7.4 libapache2-mod-php7.4 php-mysql -y
+
+    # Evitar la pantalla interactiva de configuración
+    echo "postfix postfix/main_mailer_type select Internet Site" | sudo debconf-set-selections
+    echo "postfix postfix/mailname string $dominio" | sudo debconf-set-selections
+
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y postfix
+
+    sudo apt install dovecot-imapd dovecot-pop3d -y
+    sudo systemctl restart dovecot
+    sudo apt install bsd-mailx -y
+
+    # Modifica la configuración de redes permitidas en Postfix
+    sudo sed -i "s/^mynetworks = .*/mynetworks = 127.0.0.0\/8 [::ffff:127.0.0.0]\/104 [::1]\/128 $(echo $ip | awk -F. '{print $1"."$2"."$3}').0\/24/" /etc/postfix/main.cf
+    # Configura la entrega de correo en formato Maildir en Postfix
+    echo "home_mailbox = Maildir/" | sudo tee -a /etc/postfix/main.cf
+    echo "mailbox_command =" | sudo tee -a /etc/postfix/main.cf
+    echo "smtpd_tls_auth_only = yes" >> /etc/postfix/main.cf
+    # Habilitar la escucha en el puerto 587 (submission) para envío de correos con autenticación
+    echo "submission inet n       -       n       -       -       smtpd" >> /etc/postfix/master.cf
+
+    # Recarga y reinicia el servicio Postfix
+    sudo systemctl reload postfix
+    sudo systemctl restart postfix
+
+    # Habilita la autenticación en texto plano en Dovecot
+    sudo sed -i 's/^#disable_plaintext_auth = yes/disable_plaintext_auth = no/' /etc/dovecot/conf.d/10-auth.conf
+
+    # Configura el formato de almacenamiento de correo en Dovecot
+    sudo sed -i 's/^#   mail_location = maildir:~\/Maildir/    mail_location = maildir:~\/Maildir/' /etc/dovecot/conf.d/10-mail.conf
+    sudo sed -i 's/^mail_location = mbox:~\/mail:INBOX=\/var\/mail\/%u/#mail_location = mbox:~\/mail:INBOX=\/var\/mail\/%u/' /etc/dovecot/conf.d/10-mail.conf
+
+    # Reinicia el servicio Dovecot
+    sudo systemctl restart dovecot
+
+    # Agrega registros de correo y reinicia BIND9
+    echo "$dominio  IN  MX  10  correo.$dominio." | sudo tee -a /etc/bind/db.$dominio
+    echo "pop3 IN  CNAME   servidor" | sudo tee -a /etc/bind/db.$dominio
+    echo "smtp IN  CNAME   servidor" | sudo tee -a /etc/bind/db.$dominio
+    sudo systemctl restart bind9
+
+    #Abrir puertos
+    sudo ufw allow 25/tcp
+    sudo ufw allow 110/tcp
+    sudo ufw allow 143/tcp
+    sudo ufw allow 587/tcp
+    sudo ufw allow 53/tcp
+    sudo ufw allow 53/udp
+    sudo ufw allow 80/tcp
+    sudo ufw reload
+
+
+    sudo apt install unzip -y
+
+    # Establecer rutas para los directorios de datos y archivos adjuntos
+    data_directory="/var/www/html/squirrelmail/data/"
+    attach_directory="/var/www/html/squirrelmail/attach/"
+
+    # Ruta de instalación de SquirrelMail
+    install_dir="/var/www/html/squirrelmail"
+
+    cd /var/www/html/
+    wget https://sourceforge.net/projects/squirrelmail/files/stable/1.4.22/squirrelmail-webmail-1.4.22.zip
+    unzip squirrelmail-webmail-1.4.22.zip
+    sudo mv squirrelmail-webmail-1.4.22 squirrelmail
+    sudo chown -R www-data:www-data "$install_dir/"
+    sudo chmod 755 -R "$install_dir/"
+
+    # Modificar conf.pl para usar tu dominio y las rutas especificadas
+    sudo sed -i "s/^\$domain.*/\$domain = '$dominio';/" $install_dir/config/config_default.php
+    sudo sed -i "s|^\$data_dir.*| \$data_dir = '$data_directory';|" $install_dir/config/config_default.php
+    sudo sed -i "s|^\$attachment_dir.*| \$attachment_dir = '$attach_directory';|" $install_dir/config/config_default.php
+    sudo sed -i "s/^\$allow_server_sort.*/\$allow_server_sort = true;/" $install_dir/config/config_default.php
+
+    echo -e "s\n\nq" | perl $install_dir/config/conf.pl
+
+    # Reiniciar Apache para aplicar cambios
+    sudo systemctl reload apache2
+    sudo systemctl restart apache2
+
+    echo "Instalación de SquirrelMail completada con configuración personalizada."
 }
 
-# Reiniciar servicios
-reiniciar_servicios() {
-  echo "Reiniciando servicios..."
-  systemctl restart postfix dovecot apache2
+# funciones/bash/entrada/solicitar_user.sh
+
+
+solicitar_user(){
+    while true; do
+        read username
+        [[ -z "$username" ]] && return
+
+        if validar_user "$username"; then
+            if validar_user_existente "$username"; then
+                echo "$username"
+                return
+            else 
+                 echo "Error: El usuario '$username' ya existe en el sistema." >&2
+            fi
+        else
+            echo "Error: El nombre de usuario no tiene un formato válido" >&2
+        fi   
+    done
 }
 
-# Ejecutar instalacion completa
-main() {
-  solicitar_dominio
-  solicitar_puertos
-  instalar_paquetes
-  generar_certificado_ssl
-  configurar_postfix
-  configurar_dovecot
-  instalar_squirrelmail
-  configurar_firewall
-  reiniciar_servicios
-  gestionar_usuarios
+# funciones/bash/validacion/validar_user.sh
 
-  echo ""
-  echo "Servidor de correo configurado."
-  echo "Dominio: mail.$MAIL_DOMAIN"
-  echo "SMTP: puerto $PORT_SMTP"
-  echo "POP3: puerto $PORT_POP3"
-  echo "IMAP: puerto $PORT_IMAP"
-  echo "Webmail: http://ip-servidor/squirrelmail"
+validar_user(){
+    local user="$1"
+    if [[ ! "$user" =~ ^[a-zA-Z0-9_]{3,16}$ ]]; then 
+        return 1
+    fi
+    return 0
 }
 
-main
+validar_user_existente(){
+    if id "$1" &>/dev/null; then
+        return 1
+    fi
+    return 0
+}
+
+
+
+
+# Verificar si el script se ejecuta como root
+if [[ $EUID -ne 0 ]]; then
+    echo "Este script debe ejecutarse como root"
+    exit 1
+fi
+
+echo " === SERVIDOR DE CORREO === "
+sudo apt update
+# Configurar servidor DNS 
+echo "Configurando servidor DNS en paulook.com...."
+ip_fija="192.168.171.132"
+dominio="alecloud.com"
+
+conf_dns "$ip_fija" "$dominio"
+
+# Establecemos el nombre de host del sistema, es decir, nuestro servidor DN
+sudo hostnamectl set-hostname "$dominio"
+
+# Verifica antes de instalar Apache
+if ! verificar_servicio "apache2"; then
+    conf_correo
+else
+    echo "Servicio de correo ya configurado."
+fi
+
+
+# Muestra el nombre de correo configurado en el sistema
+cat /etc/mailname
+
+while true; do
+    echo "=== MENU PRINCIPAL ==="
+    echo "1. Crear usuario"
+    echo "2. Salir"
+    read -p "Elija la opción que desea realizar (1-2): " opc
+
+    if [ "$opc" -eq 1 ]; then
+        echo "Ingresa el nombre de usuario:"
+        user=$(solicitar_user)
+        crear_user "$user" 
+    elif [ "$opc" -eq 2 ]; then
+        echo "Saliendo..."
+        exit 0
+    else
+        echo "Opción no válida. Intente de nuevo."
+    fi
+done
+
+
